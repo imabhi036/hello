@@ -1,0 +1,300 @@
+#include <BLEDevice.h>
+
+#include <BLEUtils.h>
+
+#include <BLEServer.h>
+
+#include <BLE2902.h>
+
+#include "PMS.h"
+
+#include <Wire.h>
+
+#include "SparkFunHTU21D.h"
+
+#define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
+
+#define TIME_TO_SLEEP  15      /* Time ESP32 will go to sleep (in seconds) */
+
+
+
+BLECharacteristic *pCharacteristic;
+
+BLECharacteristic *qCharacteristic;
+
+bool deviceConnected = false;
+
+uint16_t PMValue = 0;
+
+uint16_t PMValue2 = 0;
+
+
+HTU21D myHumidity;
+
+PMS pms(Serial);
+
+PMS::DATA data;
+
+
+
+#define SERVICE_UUID        "0000FFE0-0000-1000-8000-00805F9B34FB"
+
+#define CHARACTERISTIC_UUID "0000FFE1-0000-1000-8000-00805F9B34FB"
+
+#define CHARACTERISTIC_UUID1 "8b743dbf-3090-42ee-8dbc-3a35ecd22480"
+
+#define CHARACTERISTIC_UUID2 "3d6d3488-8e7b-48d7-adc9-bb6f78c44dd8"
+
+
+
+class MySecurity : public BLESecurityCallbacks {  // BLE 클래스 pin code 함수
+
+  uint32_t onPassKeyRequest(){
+
+    ESP_LOGI(LOG_TAG, "PassKeyRequest");
+
+    return 123456;
+
+  }
+
+  void onPassKeyNotify(uint32_t pass_key){
+
+    ESP_LOGI(LOG_TAG, "The passkey Notify number:%d", pass_key);
+
+  }
+
+  bool onConfirmPIN(uint32_t pass_key){
+
+    ESP_LOGI(LOG_TAG, "The passkey YES/NO number:%d", pass_key);
+
+    vTaskDelay(5000);
+
+    return true;
+
+  }
+
+  bool onSecurityRequest(){
+
+    ESP_LOGI(LOG_TAG, "SecurityRequest");
+
+    return true;
+
+  }
+
+  void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl){
+
+    ESP_LOGI(LOG_TAG, "Starting BLE work!");
+
+  }
+
+};
+
+
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+
+    void onWrite(BLECharacteristic *pCharacteristic) {
+
+      std::string value = pCharacteristic->getValue();
+
+      if (value.length() > 0) {
+
+        for (int i = 0; i < value.length(); i++)
+
+          Serial.print(value[i]);
+
+      }
+
+    }
+
+};
+
+
+
+void setup() {
+
+  Serial.begin(9600);
+
+   myHumidity.begin();
+
+  BLEDevice::init("ESP32");
+
+  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+
+  BLEDevice::setSecurityCallbacks(new MySecurity());
+
+  BLEServer *pServer = BLEDevice::createServer();
+
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  pCharacteristic = pService->createCharacteristic(
+      
+                      CHARACTERISTIC_UUID,
+                      
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );
+ 
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+
+                                         CHARACTERISTIC_UUID,
+
+                                         BLECharacteristic::PROPERTY_READ |
+
+                                         BLECharacteristic::PROPERTY_WRITE
+
+                                       );
+
+
+  qCharacteristic = pService->createCharacteristic(
+      
+                      CHARACTERISTIC_UUID2,
+                      
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );
+ 
+  BLECharacteristic *qCharacteristic = pService->createCharacteristic(
+
+                                         CHARACTERISTIC_UUID2,
+
+                                         BLECharacteristic::PROPERTY_READ |
+
+                                         BLECharacteristic::PROPERTY_WRITE
+
+                                       );
+                                      
+
+  pCharacteristic->setValue("hello");
+
+
+  pCharacteristic->addDescriptor(new BLE2902());
+  
+  pService->start();
+
+  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+
+  pAdvertising->start();
+
+  qCharacteristic->addDescriptor(new BLE2902());
+  
+  pService->start();
+
+  BLEAdvertising *qAdvertising = pServer->getAdvertising();
+
+  qAdvertising->start();
+
+  BLESecurity *pSecurity = new BLESecurity();  // pin code 설정
+
+  uint8_t rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+
+  uint32_t passkey = 123456; // PASS
+
+  uint8_t auth_option = ESP_BLE_ONLY_ACCEPT_SPECIFIED_AUTH_DISABLE;
+
+  esp_ble_gap_set_security_param(ESP_BLE_SM_SET_STATIC_PASSKEY, &passkey, sizeof(uint32_t));
+
+  pSecurity->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+
+  pSecurity->setCapability(ESP_IO_CAP_OUT);
+
+  pSecurity->setKeySize(16);
+
+  esp_ble_gap_set_security_param(ESP_BLE_SM_ONLY_ACCEPT_SPECIFIED_SEC_AUTH, &auth_option, sizeof(uint8_t));
+
+  pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+
+  esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &rsp_key, sizeof(uint8_t));
+
+  Serial.println("Characteristic defined! Now you can read it in your phone!");
+
+
+
+
+ 
+
+}
+
+
+void pmssensor()
+{
+
+
+  if (pms.readUntil(data))
+  {
+    Serial.print("PM 1.0 (ug/m3): ");
+    Serial.println(data.PM_AE_UG_1_0);
+
+    Serial.print("PM 2.5 (ug/m3): ");
+
+    PMValue = data.PM_AE_UG_2_5;
+    
+    Serial.println(PMValue);
+
+    Serial.print("PM 10.0 (ug/m3): ");
+
+    PMValue2 = data.PM_AE_UG_10_0;
+    Serial.println(PMValue2);
+
+    Serial.println();
+    char PMString[8];
+    dtostrf(PMValue, 1, 2, PMString);
+    pCharacteristic -> setValue(PMString);
+    pCharacteristic -> notify();
+    Serial.println("sent data: " + String(PMString));
+
+
+    char PMMString[8];
+    dtostrf(PMValue2, 1, 2, PMMString);
+    qCharacteristic -> setValue(PMMString);
+    qCharacteristic -> notify();
+    Serial.println("sent data: " + String(PMMString));
+    delay(500);
+
+
+
+
+    
+
+  }
+}
+
+void HTu21D()
+{
+
+  float humd = myHumidity.readHumidity();
+  float temp = myHumidity.readTemperature();
+
+  Serial.print("Time:");
+  Serial.print(millis());
+  Serial.print(" Temperature:");
+  Serial.print(temp, 1);
+  Serial.print("C");
+  Serial.print(" Humidity:");
+  Serial.print(humd, 1);
+  Serial.print("%");
+
+  Serial.println();
+  delay(1000);
+
+}
+
+
+
+
+void loop() {
+  
+  for (int x = 0; x < 50; x++) 
+    pmssensor();
+  
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+    Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
+     " Seconds");
+
+    esp_deep_sleep_start();
+
+//  HTu21D();
+
+  // put your main code here, to run repeatedly:
+
+  
+
+}
